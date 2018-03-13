@@ -107,8 +107,7 @@ class Authenticator(LoggingConfigurable):
         """
     )
 
-    @default("Invalid username or password")
-    login_error = Unicode(
+    login_error = Unicode("Invalid username or password",
         help="""
         Message to be overridden by authenticators if they want a custom login error message.
 
@@ -621,7 +620,7 @@ class YubikeyPAMAuthenticator(PAMAuthenticator):
     ).tag(config=True)
 
     login_error = "Yubikey wasn't recognized, try again."
-    
+
     custom_html = """
     <form action="{{login_url}}?next={{next}}" method="post" role="form">
       <div class="auth-form-header">
