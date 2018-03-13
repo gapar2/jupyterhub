@@ -107,6 +107,15 @@ class Authenticator(LoggingConfigurable):
         """
     )
 
+    @default("Invalid username or password")
+    login_error = Unicode(
+        help="""
+        Message to be overridden by authenticators if they want a custom login error message.
+
+        Defaults to "Invalid username or password"
+        """
+    )
+
     login_service = Unicode(
         help="""
         Name of the login service that this authenticator is providing using to authenticate users.
@@ -595,3 +604,87 @@ class PAMAuthenticator(LocalAuthenticator):
             self.log.warning("Failed to close PAM session for %s: %s", user.name, e)
             self.log.warning("Disabling PAM sessions from now on.")
             self.open_sessions = False
+
+class YubikeyPAMAuthenticator(PAMAuthenticator):
+    """Authenticate local UNIX users with yubico-pam PAM module"""
+
+    service = Unicode('login',
+        help="""
+        The name of the PAM service to use for authentication
+        """
+    ).tag(config=True)
+
+    yubikey_mappings_path = Unicode('/etc/yubikey_mappings',
+        help="""
+        Path that holds mapping between UNIX user and yubikey ids
+        """
+    ).tag(config=True)
+
+    login_error = "Yubikey wasn't recognized, try again."
+    
+    custom_html = """
+    <form action="{{login_url}}?next={{next}}" method="post" role="form">
+      <div class="auth-form-header">
+        Sign in with Yubikey
+      </div>
+      <div class='auth-form-body'>
+
+        <p id='insecure-login-warning' class='hidden'>
+        Warning: JupyterHub seems to be served over an unsecured HTTP connection.
+        We strongly recommend enabling HTTPS for JupyterHub.
+        </p>
+
+        {% if login_error %}
+        <p class="login_error">
+          {{login_error}}
+        </p>
+        {% endif %}
+        <label for='password_input'>Yubikey input:</label>
+        <input
+          type="password"
+          class="form-control"
+          name="password"
+          id="password_input"
+          tabindex="1"
+        />
+
+        <input
+          type="submit"
+          id="login_submit"
+          class='btn btn-jupyter'
+          value='Sign In'
+          tabindex="2"
+        />
+      </div>
+    </form>
+    """
+
+    @run_on_executor
+    def authenticate(self, handler, data):
+        """Authenticate with PAM, and return the username if login is successful.
+
+        Return None otherwise.
+        """
+
+        # we use the yubikey_mappings to find username for a given yubikey id
+        # this way, user doesn't even need to know the UNIX username associated
+        # with their yubikey
+        def parse_mapping(line):
+            """ Returns (yubikey_id, username) pair """
+            return reversed(line.split(':'))
+
+        # We read the mapping file at every authenticate call in case it changed
+        yubikey_id_to_username = dict(parse_mapping(l.strip()) for l in open(self.yubikey_mappings_path) if l.strip())
+
+        yubikey_id = data['password'][0:12]
+        username = yubikey_id_to_username.get(yubikey_id, None)
+
+        try:
+            pamela.authenticate(username, data['password'], service=self.service)
+        except pamela.PAMError as e:
+            if handler is not None:
+                self.log.warning("PAM Authentication failed (%s@%s): %s", username, handler.request.remote_ip, e)
+            else:
+                self.log.warning("PAM Authentication failed: %s", e)
+        else:
+            return username

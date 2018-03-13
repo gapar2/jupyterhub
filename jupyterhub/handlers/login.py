@@ -7,6 +7,7 @@ from tornado.escape import url_escape
 from tornado import gen
 from tornado.httputil import url_concat
 from tornado import web
+from jinja2 import Environment, BaseLoader
 
 from .base import BaseHandler
 
@@ -30,17 +31,20 @@ class LoginHandler(BaseHandler):
     """Render the login page."""
 
     def _render(self, login_error=None, username=None):
-        return self.render_template('login.html',
-                next=url_escape(self.get_argument('next', default='')),
+
+        data = dict(next=url_escape(self.get_argument('next', default='')),
                 username=username,
                 login_error=login_error,
                 custom_html=self.authenticator.custom_html,
                 login_url=self.settings['login_url'],
                 authenticator_login_url=url_concat(
                     self.authenticator.login_url(self.hub.base_url),
-                    {'next': self.get_argument('next', '')},
-                ),
-        )
+                        {'next': self.get_argument('next', '')},
+                        ))
+
+        rtemplate = Environment(loader=BaseLoader).from_string(self.authenticator.custom_html)
+        data['custom_html'] = rtemplate.render(**data)
+        return self.render_template('login.html', **data)
 
     async def get(self):
         self.statsd.incr('login.request')
@@ -93,8 +97,8 @@ class LoginHandler(BaseHandler):
             self.redirect(self.get_next_url())
         else:
             html = self._render(
-                login_error='Invalid username or password',
-                username=data['username'],
+                login_error=self.authenticator.login_error,
+                username=data.get('username', None),
             )
             self.finish(html)
 
